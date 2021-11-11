@@ -28,18 +28,7 @@ from art.attacks.evasion import DeepFool
 from art.estimators.classification import KerasClassifier
 from art.utils import load_dataset
 import tensorflow as tf
-tf.compat.v1.disable_eager_execution()
 
-# Configure a logger to capture ART outputs; these are printed in console and the level of detail is set to INFO
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-handler = logging.StreamHandler()
-formatter = logging.Formatter("[%(levelname)s] %(message)s")
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-
-# Read CIFAR10 dataset
-data_dir="/Users/ishitadebnath/projects/FoolAI/"
 labels = ['Damaged cars', 'Undamaged cars']
 img_size = 1024
 
@@ -57,85 +46,67 @@ def get_data(data_dir):
                 print(e)
     return np.array(data)
 
-train = get_data('/Users/ishitadebnath/projects/FoolAI/train')
-val = get_data('/Users/ishitadebnath/projects/FoolAI/test')
+train = get_data('/home/idebnat/FoolAI/train')
+val = get_data('/home/idebnat/FoolAI/test')
 
 x_train = []
 y_train = []
-x_test = []
-y_test = []
+x_val = []
+y_val = []
 
 for feature, label in train:
   x_train.append(feature)
   y_train.append(label)
 
 for feature, label in val:
-  x_test.append(feature)
-  y_test.append(label)
+  x_val.append(feature)
+  y_val.append(label)
 
-x_train = np.array(x_train)/255
-x_test = np.array(x_test) /255
+# Normalize the data
+x_train = np.array(x_train) / 255
+x_val = np.array(x_val) / 255
+
 x_train.reshape(-1, img_size, img_size, 1)
 y_train = np.array(y_train)
 
-x_test.reshape(-1, img_size, img_size, 1)
-y_test = np.array(y_test)
-im_shape = x_train[0].shape
+x_val.reshape(-1, img_size, img_size, 1)
+y_val = np.array(y_val)
 
-# Create Keras convolutional neural network - basic architecture from Keras examples
-# Source here: https://github.com/keras-team/keras/blob/master/examples/cifar10_cnn.py
+#opt = Adam(lr=0.000001)
+#model.compile(optimizer = opt , loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True) , metrics = ['accuracy'])
 model = Sequential()
-model.add(Conv2D(32, (3, 3), padding="same", input_shape=x_train.shape[1:]))
-model.add(Activation("relu"))
-model.add(Conv2D(32, (3, 3)))
-model.add(Activation("relu"))
-model.add(MaxPooling2D(pool_size=(2, 2)))
-model.add(Dropout(0.25))
-
-model.add(Conv2D(64, (3, 3), padding="same"))
-model.add(Activation("relu"))
-model.add(Conv2D(64, (3, 3)))
-model.add(Activation("relu"))
-model.add(MaxPooling2D(pool_size=(2, 2)))
-model.add(Dropout(0.25))
-
+# convolutional layer
+model.add(Conv2D(16, kernel_size=(3,3), strides=(1,1), padding='valid', activation='relu', input_shape=(1024,1024,3)))
+model.add(MaxPool2D(pool_size=(1,1)))
+# flatten output of conv
 model.add(Flatten())
-model.add(Dense(512))
-model.add(Activation("relu"))
-model.add(Dropout(0.5))
-model.add(Dense(10))
-model.add(Activation("softmax"))
+# hidden layer
+model.add(Dense(100, activation='relu'))
+# output layer
+model.add(Dense(2, activation='softmax'))
 
-model.compile(loss="categorical_crossentropy", optimizer="adam", metrics=["accuracy"])
+# compiling the sequential model
+model.compile(loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True), metrics=['accuracy'], optimizer='adam')
 
-# Create classifier wrapper
-classifier = KerasClassifier(model=model)
-classifier.fit(x_train, y_train, nb_epochs=10, batch_size=128)
+history = model.fit(x_train,y_train,epochs = 500 , validation_data = (x_val, y_val))
 
-# Craft adversarial samples with DeepFool
-logger.info("Create DeepFool attack")
-adv_crafter = DeepFool(classifier)
-logger.info("Craft attack on training examples")
-x_train_adv = adv_crafter.generate(x_train)
-logger.info("Craft attack test examples")
-x_test_adv = adv_crafter.generate(x_test)
+acc = history.history['accuracy']
+val_acc = history.history['val_accuracy']
+loss = history.history['loss']
+val_loss = history.history['val_loss']
 
-# Evaluate the classifier on the adversarial samples
-preds = np.argmax(classifier.predict(x_test_adv), axis=1)
-acc = np.sum(preds == np.argmax(y_test, axis=1)) / y_test.shape[0]
-logger.info("Classifier before adversarial training")
-logger.info("Accuracy on adversarial samples: %.2f%%", (acc * 100))
+epochs_range = range(500)
 
-# Data augmentation: expand the training set with the adversarial samples
-x_train = np.append(x_train, x_train_adv, axis=0)
-y_train = np.append(y_train, y_train, axis=0)
+plt.figure(figsize=(15, 15))
+plt.subplot(2, 2, 1)
+plt.plot(epochs_range, acc, label='Training Accuracy')
+plt.plot(epochs_range, val_acc, label='Validation Accuracy')
+plt.legend(loc='lower right')
+plt.title('Training and Validation Accuracy')
 
-# Retrain the CNN on the extended dataset
-model.compile(loss="categorical_crossentropy", optimizer="adam", metrics=["accuracy"])
-classifier.fit(x_train, y_train, nb_epochs=10, batch_size=128)
-
-# Evaluate the adversarially trained classifier on the test set
-preds = np.argmax(classifier.predict(x_test_adv), axis=1)
-acc = np.sum(preds == np.argmax(y_test, axis=1)) / y_test.shape[0]
-logger.info("Classifier with adversarial training")
-logger.info("Accuracy on adversarial samples: %.2f%%", (acc * 100))
+plt.subplot(2, 2, 2)
+plt.plot(epochs_range, loss, label='Training Loss')
+plt.plot(epochs_range, val_loss, label='Validation Loss')
+plt.legend(loc='upper right')
+plt.title('Training and Validation Loss')
+plt.show()
